@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import datetime
 import sqlite3
+from io import BytesIO
 st.set_page_config(page_title="Control de Equipos NFC", layout="centered")
 # Conexión a la base de datos
 conn = sqlite3.connect("eventos.db", check_same_thread=False)
@@ -43,7 +44,6 @@ CREATE TABLE IF NOT EXISTS equipos (
 )
 """)
 conn.commit()
-# Estado inicial
 if "evento_codigo" not in st.session_state:
    st.session_state.evento_codigo = None
 st.title("🧊 Control de Equipos de Frío por NFC")
@@ -64,21 +64,24 @@ if seleccion == "Nuevo evento":
    num_kits = st.number_input("Total de Kits portátiles", min_value=0)
    num_barras = st.number_input("Número total de barras", min_value=1)
    if st.button("✅ Crear evento"):
-       try:
-           cursor.execute("""
-               INSERT INTO eventos (nombre, codigo, mostradores, botelleros, vitrinas, enfriadores, kits, num_barras)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-           """, (nombre_evento, codigo_evento, num_mostradores, num_botelleros, num_vitrinas, num_enfriadores, num_kits, num_barras))
-           for i in range(1, int(num_barras) + 1):
+       if not nombre_evento or not codigo_evento:
+           st.error("⚠️ Por favor, rellena todos los campos obligatorios.")
+       else:
+           try:
                cursor.execute("""
-                   INSERT INTO barras (evento_codigo, nombre, mostradores, botelleros, vitrinas, enfriadores, kits_portatiles)
-                   VALUES (?, ?, 0, 0, 0, 0, 0)
-               """, (codigo_evento, f"Barra {i}"))
-           conn.commit()
-           st.session_state.evento_codigo = codigo_evento
-           st.rerun()
-       except sqlite3.IntegrityError:
-           st.error("❌ El código del evento ya existe.")
+                   INSERT INTO eventos (nombre, codigo, mostradores, botelleros, vitrinas, enfriadores, kits, num_barras)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               """, (nombre_evento, codigo_evento, num_mostradores, num_botelleros, num_vitrinas, num_enfriadores, num_kits, num_barras))
+               for i in range(1, int(num_barras) + 1):
+                   cursor.execute("""
+                       INSERT INTO barras (evento_codigo, nombre, mostradores, botelleros, vitrinas, enfriadores, kits_portatiles)
+                       VALUES (?, ?, 0, 0, 0, 0, 0)
+                   """, (codigo_evento, f"Barra {i}"))
+               conn.commit()
+               st.session_state.evento_codigo = codigo_evento
+               st.rerun()
+           except sqlite3.IntegrityError:
+               st.error("❌ El código del evento ya existe.")
 else:
    st.session_state.evento_codigo = eventos_dict[seleccion]
 # Si hay evento cargado
@@ -119,37 +122,63 @@ if st.session_state.evento_codigo:
                """, (nombre, mostradores, botelleros, vitrinas, enfriadores, kits, barra[0]))
                conn.commit()
                st.success(f"✅ Barra '{nombre}' actualizada")
-   st.header("📥 Registrar equipos por tag")
+   st.header("🔖 Registrar equipos por tag")
    for barra in barras:
-       st.subheader(f"📦 {barra[2]}")
-       equipos_registrables = {
-           "Botellero": barra[4],
-           "Vitrina": barra[5],
-           "Enfriador": barra[6],
-           "Kit portátil": barra[7],
+       nombre_barra = barra[2]
+       equipos_a_registrar = {
+           "botellero": barra[4],
+           "vitrina": barra[5],
+           "enfriador": barra[6],
+           "kit portátil": barra[7],
        }
-       for tipo, cantidad in equipos_registrables.items():
-           st.markdown(f"**🔹 {tipo}s esperados: {cantidad}**")
-           registros = []
-           for i in range(cantidad):
-               serial = st.text_input(f"{tipo} #{i+1} - Tag", key=f"{barra[0]}_{tipo}_{i}")
-               if serial.strip():
-                   registros.append((codigo, barra[2], tipo, serial.strip(), datetime.datetime.now().isoformat()))
-           if st.button(f"Guardar {tipo}s en {barra[2]}", key=f"guardar_{barra[0]}_{tipo}"):
-               for r in registros:
-                   try:
-                       cursor.execute("INSERT INTO equipos (evento_codigo, barra, tipo, serial, timestamp) VALUES (?, ?, ?, ?, ?)", r)
-                   except sqlite3.IntegrityError:
-                       st.warning(f"⚠️ El tag '{r[3]}' ya existe y no se ha añadido.")
+       st.subheader(f"📍 {nombre_barra}")
+       for tipo, cantidad in equipos_a_registrar.items():
+           existentes = cursor.execute("""
+               SELECT COUNT(*) FROM equipos
+               WHERE evento_codigo = ? AND barra = ? AND tipo = ?
+           """, (codigo, nombre_barra, tipo)).fetchone()[0]
+           restantes = cantidad - existentes
+           if restantes > 0:
+               st.markdown(f"**{tipo.title()}s restantes por registrar:** {restantes}")
+               for i in range(restantes):
+                   tag = st.text_input(f"🔹 Tag {tipo.title()} #{i+1} en {nombre_barra}", key=f"{nombre_barra}_{tipo}_{i}")
+                   if tag:
+                       try:
+                           cursor.execute("""
+                               INSERT INTO equipos (evento_codigo, barra, tipo, serial, timestamp)
+                               VALUES (?, ?, ?, ?, ?)
+                           """, (codigo, nombre_barra, tipo, tag.strip(), datetime.datetime.now().isoformat()))
+                           conn.commit()
+                           st.success(f"✅ {tipo.title()} registrado")
+                           st.rerun()
+                       except sqlite3.IntegrityError:
+                           st.error("❌ Ese tag ya existe.")
+           else:
+               st.info(f"✔️ Todos los {tipo.title()}s están registrados.")
+   st.header("🛠️ Editar equipos registrados")
+   df_equipos = pd.read_sql_query("SELECT * FROM equipos WHERE evento_codigo = ?", conn, params=(codigo,))
+   for i, row in df_equipos.iterrows():
+       col1, col2, col3 = st.columns([3, 2, 2])
+       with col1:
+           nuevo_serial = st.text_input(f"🔹 Tag {row['id']}", value=row['serial'], key=f"serial_{row['id']}")
+       with col2:
+           nuevo_tipo = st.text_input("Tipo", value=row['tipo'], key=f"tipo_{row['id']}")
+       with col3:
+           nueva_barra = st.text_input("Barra", value=row['barra'], key=f"barra_{row['id']}")
+       if st.button("Guardar cambios", key=f"guardar_equipo_{row['id']}"):
+           try:
+               cursor.execute("""
+                   UPDATE equipos SET serial=?, tipo=?, barra=? WHERE id=?
+               """, (nuevo_serial.strip(), nuevo_tipo.strip(), nueva_barra.strip(), row['id']))
                conn.commit()
-               st.success(f"✅ {tipo}s guardados para {barra[2]}")
+               st.success("✅ Tag actualizado")
                st.rerun()
-   st.header("📤 Exportar a Excel actualizado")
+           except sqlite3.IntegrityError:
+               st.error("❌ El tag ya existe.")
+   st.header("📤 Exportar datos")
    df_barras = pd.read_sql_query("SELECT * FROM barras WHERE evento_codigo = ?", conn, params=(codigo,))
    df_equipos = pd.read_sql_query("SELECT * FROM equipos WHERE evento_codigo = ?", conn, params=(codigo,))
-   @st.cache_data
    def to_excel(df1, df2):
-       from io import BytesIO
        output = BytesIO()
        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
            df1.to_excel(writer, sheet_name='Resumen por barra', index=False)
