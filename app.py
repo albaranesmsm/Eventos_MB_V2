@@ -9,37 +9,37 @@ cursor = conn.cursor()
 # Crear tablas si no existen
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS eventos (
-   id INTEGER PRIMARY KEY AUTOINCREMENT,
-   nombre TEXT,
-   codigo TEXT UNIQUE,
-   mostradores INTEGER,
-   botelleros INTEGER,
-   vitrinas INTEGER,
-   enfriadores INTEGER,
-   kits INTEGER,
-   num_barras INTEGER
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  nombre TEXT,
+  codigo TEXT UNIQUE,
+  mostradores INTEGER,
+  botelleros INTEGER,
+  vitrinas INTEGER,
+  enfriadores INTEGER,
+  kits INTEGER,
+  num_barras INTEGER
 )
 """)
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS barras (
-   id INTEGER PRIMARY KEY AUTOINCREMENT,
-   evento_codigo TEXT,
-   nombre TEXT,
-   mostradores INTEGER,
-   botelleros INTEGER,
-   vitrinas INTEGER,
-   enfriadores INTEGER,
-   kits_portatiles INTEGER
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  evento_codigo TEXT,
+  nombre TEXT,
+  mostradores INTEGER,
+  botelleros INTEGER,
+  vitrinas INTEGER,
+  enfriadores INTEGER,
+  kits_portatiles INTEGER
 )
 """)
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS equipos (
-   id INTEGER PRIMARY KEY AUTOINCREMENT,
-   evento_codigo TEXT,
-   barra TEXT,
-   tipo TEXT,
-   serial TEXT UNIQUE,
-   timestamp TEXT
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  evento_codigo TEXT,
+  barra TEXT,
+  tipo TEXT,
+  serial TEXT UNIQUE,
+  timestamp TEXT
 )
 """)
 conn.commit()
@@ -76,11 +76,11 @@ if seleccion == "Nuevo evento":
                """, (codigo_evento, f"Barra {i}"))
            conn.commit()
            st.session_state.evento_codigo = codigo_evento
-           st.rerun()
+           st.experimental_rerun()
        except sqlite3.IntegrityError:
            st.error("❌ El código del evento ya existe.")
 else:
-   st.session_state.evento_codigo = eventos_dict[seleccion]
+   st.session_state.evento_codigo = eventos_dict.get(seleccion, None)
 # Si hay evento cargado
 if st.session_state.evento_codigo:
    codigo = st.session_state.evento_codigo
@@ -101,7 +101,7 @@ if st.session_state.evento_codigo:
            """, (nuevo_nombre, nuevo_mostradores, nuevo_botelleros, nuevo_vitrinas, nuevo_enfriadores, nuevo_kits, nuevo_barras, codigo))
            conn.commit()
            st.success("✅ Datos del evento actualizados")
-           st.rerun()
+           st.experimental_rerun()
    st.header("🍸 Barras del evento")
    barras = cursor.execute("SELECT * FROM barras WHERE evento_codigo = ?", (codigo,)).fetchall()
    for barra in barras:
@@ -119,6 +119,55 @@ if st.session_state.evento_codigo:
                """, (nombre, mostradores, botelleros, vitrinas, enfriadores, kits, barra[0]))
                conn.commit()
                st.success(f"✅ Barra '{nombre}' actualizada")
+               st.experimental_rerun()
+   # --- NUEVO: Registro equipos NFC por barra y tipo según cantidades definidas ---
+   st.header("🧊 Registrar equipos por barra y tipo")
+   barras = cursor.execute("SELECT * FROM barras WHERE evento_codigo = ?", (codigo,)).fetchall()
+   for barra in barras:
+       st.subheader(f"Barra: {barra[2]}")
+       # Cantidades configuradas en esta barra
+       mostradores = barra[3]
+       botelleros = barra[4]
+       vitrinas = barra[5]
+       enfriadores = barra[6]
+       kits = barra[7]
+       equipos_a_guardar = []
+       def leer_tags(tipo, cantidad):
+           st.write(f"**{tipo}s a registrar: {cantidad}**")
+           for i in range(cantidad):
+               tag_key = f"tag_{barra[0]}_{tipo}_{i}"
+               tag_value = st.text_input(f"{tipo} {i+1}", key=tag_key)
+               if tag_value:
+                   tag_strip = tag_value.strip()
+                   # Comprobar si ya está registrado en otro equipo
+                   existe = cursor.execute("SELECT COUNT(*) FROM equipos WHERE serial = ?", (tag_strip,)).fetchone()[0]
+                   if existe > 0:
+                       st.warning(f"⚠️ {tipo} {i+1}: Este tag ya fue registrado.")
+                   else:
+                       equipos_a_guardar.append({
+                           "evento_codigo": codigo,
+                           "barra": barra[2],
+                           "tipo": tipo,
+                           "serial": tag_strip,
+                           "timestamp": datetime.datetime.now().isoformat()
+                       })
+       leer_tags("Mostrador", mostradores)
+       leer_tags("Botellero", botelleros)
+       leer_tags("Vitrina", vitrinas)
+       leer_tags("Enfriador", enfriadores)
+       leer_tags("Kit portátil", kits)
+       if st.button(f"💾 Guardar equipos de {barra[2]}", key=f"guardar_equipos_{barra[0]}"):
+           for equipo in equipos_a_guardar:
+               try:
+                   cursor.execute("""
+                       INSERT INTO equipos (evento_codigo, barra, tipo, serial, timestamp)
+                       VALUES (?, ?, ?, ?, ?)
+                   """, (equipo["evento_codigo"], equipo["barra"], equipo["tipo"], equipo["serial"], equipo["timestamp"]))
+                   conn.commit()
+               except sqlite3.IntegrityError:
+                   st.error(f"❌ El tag '{equipo['serial']}' ya existe, no se ha guardado.")
+           st.success(f"✅ Equipos guardados para la barra {barra[2]}")
+           st.experimental_rerun()
    st.header("🔁 Editar equipos por tag")
    df_equipos = pd.read_sql_query("SELECT * FROM equipos WHERE evento_codigo = ?", conn, params=(codigo,))
    for i, row in df_equipos.iterrows():
@@ -136,6 +185,7 @@ if st.session_state.evento_codigo:
                """, (nuevo_serial.strip(), nuevo_tipo.strip(), nueva_barra.strip(), row['id']))
                conn.commit()
                st.success(f"✅ Tag actualizado")
+               st.experimental_rerun()
            except sqlite3.IntegrityError:
                st.error("❌ El tag ya existe.")
    st.header("📤 Exportar a Excel actualizado")
