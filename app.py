@@ -76,7 +76,7 @@ if seleccion == "Nuevo evento":
                """, (codigo_evento, f"Barra {i}"))
            conn.commit()
            st.session_state.evento_codigo = codigo_evento
-           st.experimental_rerun()
+           st.rerun()
        except sqlite3.IntegrityError:
            st.error("❌ El código del evento ya existe.")
 else:
@@ -101,7 +101,7 @@ if st.session_state.evento_codigo:
            """, (nuevo_nombre, nuevo_mostradores, nuevo_botelleros, nuevo_vitrinas, nuevo_enfriadores, nuevo_kits, nuevo_barras, codigo))
            conn.commit()
            st.success("✅ Datos del evento actualizados")
-           st.experimental_rerun()
+           st.rerun()
    st.header("🍸 Barras del evento")
    barras = cursor.execute("SELECT * FROM barras WHERE evento_codigo = ?", (codigo,)).fetchall()
    for barra in barras:
@@ -119,7 +119,7 @@ if st.session_state.evento_codigo:
                """, (nombre, mostradores, botelleros, vitrinas, enfriadores, kits, barra[0]))
                conn.commit()
                st.success(f"✅ Barra '{nombre}' actualizada")
-               st.experimental_rerun()
+               st.rerun()
    # --- NUEVO: Registro equipos NFC por barra y tipo según cantidades definidas ---
    st.header("🧊 Registrar equipos por barra y tipo")
    barras = cursor.execute("SELECT * FROM barras WHERE evento_codigo = ?", (codigo,)).fetchall()
@@ -167,7 +167,7 @@ if st.session_state.evento_codigo:
                except sqlite3.IntegrityError:
                    st.error(f"❌ El tag '{equipo['serial']}' ya existe, no se ha guardado.")
            st.success(f"✅ Equipos guardados para la barra {barra[2]}")
-           st.experimental_rerun()
+           st.rerun()
    st.header("🔁 Editar equipos por tag")
    df_equipos = pd.read_sql_query("SELECT * FROM equipos WHERE evento_codigo = ?", conn, params=(codigo,))
    for i, row in df_equipos.iterrows():
@@ -185,7 +185,7 @@ if st.session_state.evento_codigo:
                """, (nuevo_serial.strip(), nuevo_tipo.strip(), nueva_barra.strip(), row['id']))
                conn.commit()
                st.success(f"✅ Tag actualizado")
-               st.experimental_rerun()
+               st.rerun()
            except sqlite3.IntegrityError:
                st.error("❌ El tag ya existe.")
    st.header("📤 Exportar a Excel actualizado")
