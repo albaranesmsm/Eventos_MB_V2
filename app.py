@@ -43,7 +43,6 @@ CREATE TABLE IF NOT EXISTS equipos (
 )
 """)
 conn.commit()
-# Estado inicial
 if "evento_codigo" not in st.session_state:
    st.session_state.evento_codigo = None
 st.title("🧊 Control de Equipos de Frío por NFC")
@@ -76,7 +75,7 @@ if seleccion == "Nuevo evento":
                """, (codigo_evento, f"Barra {i}"))
            conn.commit()
            st.session_state.evento_codigo = codigo_evento
-           st.rerun()
+           st.experimental_rerun()
        except sqlite3.IntegrityError:
            st.error("❌ El código del evento ya existe.")
 else:
@@ -101,7 +100,7 @@ if st.session_state.evento_codigo:
            """, (nuevo_nombre, nuevo_mostradores, nuevo_botelleros, nuevo_vitrinas, nuevo_enfriadores, nuevo_kits, nuevo_barras, codigo))
            conn.commit()
            st.success("✅ Datos del evento actualizados")
-           st.rerun()
+           st.experimental_rerun()
    st.header("🍸 Barras del evento")
    barras = cursor.execute("SELECT * FROM barras WHERE evento_codigo = ?", (codigo,)).fetchall()
    for barra in barras:
@@ -119,38 +118,31 @@ if st.session_state.evento_codigo:
                """, (nombre, mostradores, botelleros, vitrinas, enfriadores, kits, barra[0]))
                conn.commit()
                st.success(f"✅ Barra '{nombre}' actualizada")
-   st.header("➕ Registrar nuevo equipo")
-   barras_disponibles = cursor.execute(
-       "SELECT nombre FROM barras WHERE evento_codigo = ?", (codigo,)
-   ).fetchall()
-   nombres_barras = [b[0] for b in barras_disponibles]
-   if nombres_barras:
-       nueva_barra = st.selectbox("Selecciona la barra", nombres_barras)
-       nuevo_tipo = st.selectbox("Tipo de equipo", ["botellero", "vitrina", "enfriador", "kit"])
-       nuevo_tag = st.text_input("Introduce el tag NFC del equipo")
-       if st.button("📌 Registrar equipo"):
-           if not nuevo_tag.strip():
-               st.warning("⚠️ El campo del tag está vacío.")
-           else:
-               try:
-                   cursor.execute("""
-                       INSERT INTO equipos (evento_codigo, barra, tipo, serial, timestamp)
-                       VALUES (?, ?, ?, ?, ?)
-                   """, (
-                       codigo,
-                       nueva_barra,
-                       nuevo_tipo,
-                       nuevo_tag.strip(),
-                       datetime.datetime.now().isoformat()
-                   ))
-                   conn.commit()
-                   st.success("✅ Equipo registrado correctamente.")
-                   st.rerun()
-               except sqlite3.IntegrityError:
-                   st.error("❌ El tag ya existe.")
-   else:
-       st.info("No hay barras definidas para este evento.")
-   st.header("🔁 Editar equipos por tag")
+   st.header("📥 Registro de tags según inventario")
+   for barra in barras:
+       barra_id, evento_codigo, nombre_barra, most, bot, vit, enf, kits = barra
+       st.subheader(f"📍 {nombre_barra}")
+       for tipo, cantidad in [
+           ("Botellero", bot),
+           ("Vitrina", vit),
+           ("Enfriador", enf),
+           ("Kit portátil", kits)
+       ]:
+           st.markdown(f"**{tipo}s a registrar: {cantidad}**")
+           for i in range(cantidad):
+               serial_input = st.text_input(f"{tipo} #{i+1} - Serial", key=f"{nombre_barra}_{tipo}_{i}")
+               if serial_input:
+                   if st.button(f"Registrar {tipo} #{i+1} en {nombre_barra}", key=f"btn_{nombre_barra}_{tipo}_{i}"):
+                       try:
+                           cursor.execute("""
+                               INSERT INTO equipos (evento_codigo, barra, tipo, serial, timestamp)
+                               VALUES (?, ?, ?, ?, ?)
+                           """, (codigo, nombre_barra, tipo, serial_input.strip(), datetime.datetime.now().isoformat()))
+                           conn.commit()
+                           st.success(f"✅ {tipo} registrado correctamente")
+                       except sqlite3.IntegrityError:
+                           st.error("❌ Este tag ya ha sido registrado")
+   st.header("🔁 Editar equipos ya registrados")
    df_equipos = pd.read_sql_query("SELECT * FROM equipos WHERE evento_codigo = ?", conn, params=(codigo,))
    for i, row in df_equipos.iterrows():
        col1, col2, col3 = st.columns([3, 2, 2])
