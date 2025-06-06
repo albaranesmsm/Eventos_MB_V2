@@ -1,23 +1,16 @@
 import streamlit as st
-import pandas as pd
-import datetime
 import sqlite3
-st.set_page_config(page_title="Control de Equipos NFC", layout="centered")
-# Conexión a la base de datos
+import datetime
+# --- Configuración ---
+st.set_page_config(page_title="Registro Equipos NFC", layout="centered")
+# --- Conexión y creación de tablas SQLite ---
 conn = sqlite3.connect("eventos.db", check_same_thread=False)
 cursor = conn.cursor()
-# Crear tablas si no existen, con columna timestamp en equipos
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS eventos (
-   id INTEGER PRIMARY KEY AUTOINCREMENT,
+   codigo TEXT PRIMARY KEY,
    nombre TEXT,
-   codigo TEXT UNIQUE,
-   mostradores INTEGER,
-   botelleros INTEGER,
-   vitrinas INTEGER,
-   enfriadores INTEGER,
-   kits INTEGER,
-   num_barras INTEGER
+   fecha TEXT
 )
 """)
 cursor.execute("""
@@ -25,11 +18,7 @@ CREATE TABLE IF NOT EXISTS barras (
    id INTEGER PRIMARY KEY AUTOINCREMENT,
    evento_codigo TEXT,
    nombre TEXT,
-   mostradores INTEGER,
-   botelleros INTEGER,
-   vitrinas INTEGER,
-   enfriadores INTEGER,
-   kits_portatiles INTEGER
+   FOREIGN KEY(evento_codigo) REFERENCES eventos(codigo)
 )
 """)
 cursor.execute("""
@@ -38,12 +27,27 @@ CREATE TABLE IF NOT EXISTS equipos (
    evento_codigo TEXT,
    barra TEXT,
    tipo TEXT,
-   serial TEXT UNIQUE,
-   timestamp TEXT
+   serial TEXT,
+   timestamp TEXT,
+   FOREIGN KEY(evento_codigo) REFERENCES eventos(codigo)
 )
 """)
 conn.commit()
-# Estado inicial
+# --- Funciones ---
+def cargar_eventos():
+   return cursor.execute("SELECT codigo, nombre FROM eventos").fetchall()
+def cargar_barras(evento_codigo):
+   return cursor.execute("SELECT nombre FROM barras WHERE evento_codigo = ?", (evento_codigo,)).fetchall()
+def cargar_equipos(evento_codigo, barra):
+   return cursor.execute(
+       "SELECT tipo, COUNT(*) FROM equipos WHERE evento_codigo = ? AND barra = ? GROUP BY tipo",
+       (evento_codigo, barra)
+   ).fetchall()
+def existe_tag(evento_codigo, serial):
+   return cursor.execute(
+       "SELECT 1 FROM equipos WHERE evento_codigo = ? AND serial = ?", (evento_codigo, serial)
+   ).fetchone() is not None
+# --- Variables de sesión ---
 if "evento_codigo" not in st.session_state:
    st.session_state.evento_codigo = None
 if "registrando_equipo" not in st.session_state:
@@ -56,100 +60,82 @@ if "contador_tags" not in st.session_state:
    st.session_state.contador_tags = 0
 if "tags_a_registrar" not in st.session_state:
    st.session_state.tags_a_registrar = 0
-st.title("🧊 Control de Equipos de Frío por NFC")
-# Cargar eventos existentes
-eventos = cursor.execute("SELECT codigo, nombre FROM eventos").fetchall()
-eventos_dict = {f"{n} ({c})": c for c, n in eventos}
-opciones = ["Nuevo evento"] + list(eventos_dict.keys())
-seleccion = st.selectbox("📂 Cargar evento existente o crear uno nuevo", opciones)
-# Crear nuevo evento
-if seleccion == "Nuevo evento":
-   st.header("🔧 Configuración del Evento")
-   nombre_evento = st.text_input("Nombre del evento")
-   codigo_evento = st.text_input("Código único del evento")
-   num_mostradores = st.number_input("Total de Mostradores", min_value=0, value=0)
-   num_botelleros = st.number_input("Total de Botelleros", min_value=0, value=0)
-   num_vitrinas = st.number_input("Total de Vitrinas", min_value=0, value=0)
-   num_enfriadores = st.number_input("Total de Enfriadores", min_value=0, value=0)
-   num_kits = st.number_input("Total de Kits portátiles", min_value=0, value=0)
-   num_barras = st.number_input("Número total de barras", min_value=1, value=1)
-   if st.button("✅ Crear evento"):
-       try:
-           cursor.execute("""
-               INSERT INTO eventos (nombre, codigo, mostradores, botelleros, vitrinas, enfriadores, kits, num_barras)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-           """, (nombre_evento, codigo_evento, num_mostradores, num_botelleros, num_vitrinas, num_enfriadores, num_kits, num_barras))
-           for i in range(1, int(num_barras) + 1):
-               cursor.execute("""
-                   INSERT INTO barras (evento_codigo, nombre, mostradores, botelleros, vitrinas, enfriadores, kits_portatiles)
-                   VALUES (?, ?, 0, 0, 0, 0, 0)
-               """, (codigo_evento, f"Barra {i}"))
-           conn.commit()
-           st.session_state.evento_codigo = codigo_evento
+# --- Interfaz ---
+st.title("📲 Registro de Equipos NFC")
+# Selección de evento
+eventos = cargar_eventos()
+if not eventos:
+   st.warning("No hay eventos cargados en la base de datos.")
+   st.stop()
+evento_sel = st.selectbox("Selecciona un evento", [f"{c} - {n}" for c, n in eventos])
+codigo, nombre_evento = evento_sel.split(" - ", maxsplit=1)
+st.session_state.evento_codigo = codigo
+# Mostrar barras para el evento
+barras = cargar_barras(codigo)
+if not barras:
+   st.warning("No hay barras definidas para este evento.")
+   st.stop()
+barra_sel = st.selectbox("Selecciona una barra", [b[0] for b in barras])
+# Mostrar equipos declarados (simulación: pide cantidad por tipo, puedes adaptar según tu base)
+st.header(f"Barras y Equipos para el evento {nombre_evento}")
+tipos_posibles = ["frío", "sonido", "iluminación", "mostradores"]
+# Para la barra seleccionada, pedimos cantidades a declarar por tipo (excepto MOSTRADORES)
+cantidades = {}
+st.subheader(f"Introduce cantidad de equipos por tipo para la barra {barra_sel}:")
+for tipo in tipos_posibles:
+   if tipo == "mostradores":
+       st.info("No se registran tags para tipo MOSTRADORES.")
+       continue
+   cantidad = st.number_input(f"{tipo.capitalize()}", min_value=0, step=1, key=f"{barra_sel}_{tipo}")
+   cantidades[tipo] = cantidad
+# Botón para iniciar registro
+if not st.session_state.registrando_equipo:
+   # Selección para comenzar registro
+   tipo_sel = st.selectbox("Selecciona tipo de equipo para registrar tags", [t for t in cantidades if cantidades[t] > 0])
+   cantidad_a_registrar = cantidades.get(tipo_sel, 0)
+   if cantidad_a_registrar > 0:
+       if st.button(f"Comenzar registro de {cantidad_a_registrar} tags para {tipo_sel} en barra {barra_sel}"):
+           st.session_state.registrando_equipo = True
+           st.session_state.barra_actual = barra_sel
+           st.session_state.tipo_actual = tipo_sel
+           st.session_state.contador_tags = 0
+           st.session_state.tags_a_registrar = cantidad_a_registrar
            st.experimental_rerun()
-       except sqlite3.IntegrityError:
-           st.error("❌ El código del evento ya existe.")
 else:
-   st.session_state.evento_codigo = eventos_dict.get(seleccion, None)
-# Si hay evento cargado
-if st.session_state.evento_codigo:
-   codigo = st.session_state.evento_codigo
-   evento = cursor.execute("SELECT * FROM eventos WHERE codigo = ?", (codigo,)).fetchone()
-   st.success(f"Evento cargado: {evento[1]} (Código: {evento[2]})")
-   with st.expander("✏️ Editar datos generales del evento"):
-       nuevo_nombre = st.text_input("Nombre del evento", value=evento[1])
-       nuevo_mostradores = st.number_input("Total de Mostradores", min_value=0, value=evento[3])
-       nuevo_botelleros = st.number_input("Total de Botelleros", min_value=0, value=evento[4])
-       nuevo_vitrinas = st.number_input("Total de Vitrinas", min_value=0, value=evento[5])
-       nuevo_enfriadores = st.number_input("Total de Enfriadores", min_value=0, value=evento[6])
-       nuevo_kits = st.number_input("Total de Kits portátiles", min_value=0, value=evento[7])
-       nuevo_barras = st.number_input("Número total de barras", min_value=1, value=evento[8])
-       if st.button("💾 Guardar cambios en el evento"):
-           cursor.execute("""
-               UPDATE eventos SET nombre=?, mostradores=?, botelleros=?, vitrinas=?, enfriadores=?, kits=?, num_barras=?
-               WHERE codigo=?
-           """, (nuevo_nombre, nuevo_mostradores, nuevo_botelleros, nuevo_vitrinas, nuevo_enfriadores, nuevo_kits, nuevo_barras, codigo))
-           conn.commit()
-           st.success("✅ Datos del evento actualizados")
-           st.experimental_rerun()
-   st.header("🍸 Barras del evento")
-   barras = cursor.execute("SELECT * FROM barras WHERE evento_codigo = ?", (codigo,)).fetchall()
-   for barra in barras:
-       with st.expander(f"🧪 {barra[2]}"):
-           nombre = st.text_input("Nombre o ubicación", value=barra[2], key=f"nombre_{barra[0]}")
-           mostradores = st.number_input("Mostradores", min_value=0, value=barra[3], key=f"most_{barra[0]}")
-           botelleros = st.number_input("Botelleros", min_value=0, value=barra[4], key=f"bot_{barra[0]}")
-           vitrinas = st.number_input("Vitrinas", min_value=0, value=barra[5], key=f"vit_{barra[0]}")
-           enfriadores = st.number_input("Enfriadores", min_value=0, value=barra[6], key=f"enf_{barra[0]}")
-           kits = st.number_input("Kits portátiles", min_value=0, value=barra[7], key=f"kpt_{barra[0]}")
-           if st.button(f"💾 Guardar cambios en {barra[2]}", key=f"guardar_barra_{barra[0]}"):
-               cursor.execute("""
-                   UPDATE barras SET nombre=?, mostradores=?, botelleros=?, vitrinas=?, enfriadores=?, kits_portatiles=?
-                   WHERE id=?
-               """, (nombre, mostradores, botelleros, vitrinas, enfriadores, kits, barra[0]))
-               conn.commit()
-               st.success(f"✅ Barra '{nombre}' actualizada")
-               st.experimental_rerun()
-   st.header("🔖 Registrar Equipos NFC por Barra y Tipo")
-   if not st.session_state.registrando_equipo:
-       st.info("Selecciona la barra y el tipo de equipo para comenzar el registro de tags.")
-       # Selección barra
-       barra_sel = st.selectbox("Selecciona una barra", [b[2] for b in barras])
-       # Mostrar tipos (excepto mostradores)
-       tipos_materiales = ['botelleros', 'vitrinas', 'enfriadores', 'kits_portatiles']
-       tipo_sel = st.selectbox("Selecciona tipo de equipo", tipos_materiales)
-       # Obtener cantidad declarada en barra para el tipo seleccionado
-       barra_info = next(b for b in barras if b[2] == barra_sel)
-       cantidad_declarada = {
-           'botelleros': barra_info[4],
-           'vitrinas': barra_info[5],
-           'enfriadores': barra_info[6],
-           'kits_portatiles': barra_info[7],
-       }.get(tipo_sel, 0)
-       st.write(f"Cantidad declarada para {tipo_sel} en {barra_sel}: **{cantidad_declarada}**")
-       if cantidad_declarada == 0:
-           st.warning("No hay unidades declaradas para este tipo en la barra seleccionada.")
+   st.subheader(f"Registrando tags para tipo '{st.session_state.tipo_actual}' en barra '{st.session_state.barra_actual}'")
+   tag_input = st.text_input(f"Introduce tag #{st.session_state.contador_tags + 1}")
+   if tag_input:
+       if st.session_state.tipo_actual == "mostradores":
+           st.warning("No se debe registrar tags para MOSTRADORES.")
        else:
-           if st.button("Comenzar registro de tags"):
-               st.session_state.registrando_equipo = True
-               st.session_state.barra_actual =
+           if existe_tag(st.session_state.evento_codigo, tag_input.strip()):
+               st.error("Este tag ya ha sido registrado.")
+           else:
+               cursor.execute("""
+                   INSERT INTO equipos (evento_codigo, barra, tipo, serial, timestamp)
+                   VALUES (?, ?, ?, ?, ?)
+               """, (
+                   st.session_state.evento_codigo,
+                   st.session_state.barra_actual,
+                   st.session_state.tipo_actual,
+                   tag_input.strip(),
+                   datetime.datetime.now().isoformat()
+               ))
+               conn.commit()
+               st.success(f"Tag #{st.session_state.contador_tags + 1} registrado correctamente.")
+               st.session_state.contador_tags += 1
+               if st.session_state.contador_tags >= st.session_state.tags_a_registrar:
+                   st.success("✅ Registro completo para este tipo y barra.")
+                   st.session_state.registrando_equipo = False
+                   st.session_state.barra_actual = None
+                   st.session_state.tipo_actual = None
+                   st.session_state.contador_tags = 0
+                   st.session_state.tags_a_registrar = 0
+               st.experimental_rerun()
+   if st.button("Cancelar registro"):
+       st.session_state.registrando_equipo = False
+       st.session_state.barra_actual = None
+       st.session_state.tipo_actual = None
+       st.session_state.contador_tags = 0
+       st.session_state.tags_a_registrar = 0
+       st.experimental_rerun()
