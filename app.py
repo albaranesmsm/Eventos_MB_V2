@@ -119,6 +119,37 @@ if st.session_state.evento_codigo:
                """, (nombre, mostradores, botelleros, vitrinas, enfriadores, kits, barra[0]))
                conn.commit()
                st.success(f"✅ Barra '{nombre}' actualizada")
+   st.header("➕ Registrar nuevo equipo")
+   barras_disponibles = cursor.execute(
+       "SELECT nombre FROM barras WHERE evento_codigo = ?", (codigo,)
+   ).fetchall()
+   nombres_barras = [b[0] for b in barras_disponibles]
+   if nombres_barras:
+       nueva_barra = st.selectbox("Selecciona la barra", nombres_barras)
+       nuevo_tipo = st.selectbox("Tipo de equipo", ["botellero", "vitrina", "enfriador", "kit"])
+       nuevo_tag = st.text_input("Introduce el tag NFC del equipo")
+       if st.button("📌 Registrar equipo"):
+           if not nuevo_tag.strip():
+               st.warning("⚠️ El campo del tag está vacío.")
+           else:
+               try:
+                   cursor.execute("""
+                       INSERT INTO equipos (evento_codigo, barra, tipo, serial, timestamp)
+                       VALUES (?, ?, ?, ?, ?)
+                   """, (
+                       codigo,
+                       nueva_barra,
+                       nuevo_tipo,
+                       nuevo_tag.strip(),
+                       datetime.datetime.now().isoformat()
+                   ))
+                   conn.commit()
+                   st.success("✅ Equipo registrado correctamente.")
+                   st.rerun()
+               except sqlite3.IntegrityError:
+                   st.error("❌ El tag ya existe.")
+   else:
+       st.info("No hay barras definidas para este evento.")
    st.header("🔁 Editar equipos por tag")
    df_equipos = pd.read_sql_query("SELECT * FROM equipos WHERE evento_codigo = ?", conn, params=(codigo,))
    for i, row in df_equipos.iterrows():
@@ -126,7 +157,7 @@ if st.session_state.evento_codigo:
        with col1:
            nuevo_serial = st.text_input(f"🔹 Tag {row['id']}", value=row['serial'], key=f"serial_{row['id']}")
        with col2:
-           nuevo_tipo = st.selectbox("Tipo", ["botellero", "vitrina", "enfriador", "kit"], index=["botellero", "vitrina", "enfriador", "kit"].index(row["tipo"]), key=f"tipo_{row['id']}")
+           nuevo_tipo = st.text_input("Tipo", value=row['tipo'], key=f"tipo_{row['id']}")
        with col3:
            nueva_barra = st.text_input("Barra", value=row['barra'], key=f"barra_{row['id']}")
        if st.button("Guardar cambios", key=f"guardar_equipo_{row['id']}"):
