@@ -75,7 +75,7 @@ if seleccion == "Nuevo evento":
                """, (codigo_evento, f"Barra {i}"))
            conn.commit()
            st.session_state.evento_codigo = codigo_evento
-           st.experimental_rerun()
+          st.rerun()
        except sqlite3.IntegrityError:
            st.error("❌ El código del evento ya existe.")
 else:
@@ -100,7 +100,7 @@ if st.session_state.evento_codigo:
            """, (nuevo_nombre, nuevo_mostradores, nuevo_botelleros, nuevo_vitrinas, nuevo_enfriadores, nuevo_kits, nuevo_barras, codigo))
            conn.commit()
            st.success("✅ Datos del evento actualizados")
-           st.experimental_rerun()
+          st.rerun()
    st.header("🍸 Barras del evento")
    barras = cursor.execute("SELECT * FROM barras WHERE evento_codigo = ?", (codigo,)).fetchall()
    for barra in barras:
