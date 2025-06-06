@@ -3,7 +3,7 @@ import pandas as pd
 import datetime
 import sqlite3
 st.set_page_config(page_title="Control de Equipos NFC", layout="centered")
-# Conexión a SQLite
+# Conexión a la base de datos
 conn = sqlite3.connect("eventos.db", check_same_thread=False)
 cursor = conn.cursor()
 # Crear tablas si no existen
@@ -43,10 +43,11 @@ CREATE TABLE IF NOT EXISTS equipos (
 )
 """)
 conn.commit()
+# Estado inicial
 if "evento_codigo" not in st.session_state:
    st.session_state.evento_codigo = None
 st.title("🧊 Control de Equipos de Frío por NFC")
-# Selección de evento
+# Cargar eventos existentes
 eventos = cursor.execute("SELECT codigo, nombre FROM eventos").fetchall()
 eventos_dict = {f"{n} ({c})": c for c, n in eventos}
 opciones = ["Nuevo evento"] + list(eventos_dict.keys())
@@ -75,7 +76,7 @@ if seleccion == "Nuevo evento":
                """, (codigo_evento, f"Barra {i}"))
            conn.commit()
            st.session_state.evento_codigo = codigo_evento
-           st.experimental_rerun()
+           st.rerun()
        except sqlite3.IntegrityError:
            st.error("❌ El código del evento ya existe.")
 else:
@@ -85,7 +86,6 @@ if st.session_state.evento_codigo:
    codigo = st.session_state.evento_codigo
    evento = cursor.execute("SELECT * FROM eventos WHERE codigo = ?", (codigo,)).fetchone()
    st.success(f"Evento cargado: {evento[1]} (Código: {evento[2]})")
-   # Edición de evento
    with st.expander("✏️ Editar datos generales del evento"):
        nuevo_nombre = st.text_input("Nombre del evento", value=evento[1])
        nuevo_mostradores = st.number_input("Total de Mostradores", min_value=0, value=evento[3])
@@ -101,8 +101,7 @@ if st.session_state.evento_codigo:
            """, (nuevo_nombre, nuevo_mostradores, nuevo_botelleros, nuevo_vitrinas, nuevo_enfriadores, nuevo_kits, nuevo_barras, codigo))
            conn.commit()
            st.success("✅ Datos del evento actualizados")
-           st.experimental_rerun()
-   # Gestión de barras
+           st.rerun()
    st.header("🍸 Barras del evento")
    barras = cursor.execute("SELECT * FROM barras WHERE evento_codigo = ?", (codigo,)).fetchall()
    for barra in barras:
@@ -120,58 +119,32 @@ if st.session_state.evento_codigo:
                """, (nombre, mostradores, botelleros, vitrinas, enfriadores, kits, barra[0]))
                conn.commit()
                st.success(f"✅ Barra '{nombre}' actualizada")
-   # Registro de tags
-   st.header("📲 Registro de Equipos por Tag")
+   st.header("📥 Registrar equipos por tag")
    for barra in barras:
-       nombre_barra = barra[2]
-       tipos = {
+       st.subheader(f"📦 {barra[2]}")
+       equipos_registrables = {
            "Botellero": barra[4],
            "Vitrina": barra[5],
            "Enfriador": barra[6],
-           "Kit portátil": barra[7]
+           "Kit portátil": barra[7],
        }
-       for tipo, cantidad in tipos.items():
-           registrados = cursor.execute("""
-               SELECT COUNT(*) FROM equipos WHERE evento_codigo=? AND barra=? AND tipo=?
-           """, (codigo, nombre_barra, tipo)).fetchone()[0]
-           restantes = cantidad - registrados
-           if restantes > 0:
-               st.subheader(f"{nombre_barra} - {tipo} (Pendientes: {restantes})")
-               for _ in range(restantes):
-                   serial = st.text_input(f"🔹 Tag para {tipo} en {nombre_barra}", key=f"{nombre_barra}_{tipo}_{_}")
-                   if serial:
-                       try:
-                           cursor.execute("""
-                               INSERT INTO equipos (evento_codigo, barra, tipo, serial, timestamp)
-                               VALUES (?, ?, ?, ?, ?)
-                           """, (codigo, nombre_barra, tipo, serial.strip(), str(datetime.datetime.now())))
-                           conn.commit()
-                           st.success(f"✅ Tag {serial} registrado en {nombre_barra} como {tipo}")
-                           st.experimental_rerun()
-                       except sqlite3.IntegrityError:
-                           st.error("❌ Tag duplicado.")
-   # Edición manual de tags
-   st.header("🔁 Editar Equipos")
-   df_equipos = pd.read_sql_query("SELECT * FROM equipos WHERE evento_codigo = ?", conn, params=(codigo,))
-   for i, row in df_equipos.iterrows():
-       col1, col2, col3 = st.columns([3, 2, 2])
-       with col1:
-           nuevo_serial = st.text_input(f"🔹 Tag {row['id']}", value=row['serial'], key=f"serial_{row['id']}")
-       with col2:
-           nuevo_tipo = st.text_input("Tipo", value=row['tipo'], key=f"tipo_{row['id']}")
-       with col3:
-           nueva_barra = st.text_input("Barra", value=row['barra'], key=f"barra_{row['id']}")
-       if st.button("Guardar cambios", key=f"guardar_equipo_{row['id']}"):
-           try:
-               cursor.execute("""
-                   UPDATE equipos SET serial=?, tipo=?, barra=? WHERE id=?
-               """, (nuevo_serial.strip(), nuevo_tipo.strip(), nueva_barra.strip(), row['id']))
+       for tipo, cantidad in equipos_registrables.items():
+           st.markdown(f"**🔹 {tipo}s esperados: {cantidad}**")
+           registros = []
+           for i in range(cantidad):
+               serial = st.text_input(f"{tipo} #{i+1} - Tag", key=f"{barra[0]}_{tipo}_{i}")
+               if serial.strip():
+                   registros.append((codigo, barra[2], tipo, serial.strip(), datetime.datetime.now().isoformat()))
+           if st.button(f"Guardar {tipo}s en {barra[2]}", key=f"guardar_{barra[0]}_{tipo}"):
+               for r in registros:
+                   try:
+                       cursor.execute("INSERT INTO equipos (evento_codigo, barra, tipo, serial, timestamp) VALUES (?, ?, ?, ?, ?)", r)
+                   except sqlite3.IntegrityError:
+                       st.warning(f"⚠️ El tag '{r[3]}' ya existe y no se ha añadido.")
                conn.commit()
-               st.success("✅ Tag actualizado")
-           except sqlite3.IntegrityError:
-               st.error("❌ El tag ya existe.")
-   # Exportación
-   st.header("📤 Exportar a Excel")
+               st.success(f"✅ {tipo}s guardados para {barra[2]}")
+               st.rerun()
+   st.header("📤 Exportar a Excel actualizado")
    df_barras = pd.read_sql_query("SELECT * FROM barras WHERE evento_codigo = ?", conn, params=(codigo,))
    df_equipos = pd.read_sql_query("SELECT * FROM equipos WHERE evento_codigo = ?", conn, params=(codigo,))
    @st.cache_data
