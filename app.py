@@ -9,37 +9,37 @@ cursor = conn.cursor()
 # Crear tablas si no existen
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS eventos (
-   id INTEGER PRIMARY KEY AUTOINCREMENT,
-   nombre TEXT,
-   codigo TEXT UNIQUE,
-   mostradores INTEGER,
-   botelleros INTEGER,
-   vitrinas INTEGER,
-   enfriadores INTEGER,
-   kits INTEGER,
-   num_barras INTEGER
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  nombre TEXT,
+  codigo TEXT UNIQUE,
+  mostradores INTEGER,
+  botelleros INTEGER,
+  vitrinas INTEGER,
+  enfriadores INTEGER,
+  kits INTEGER,
+  num_barras INTEGER
 )
 """)
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS barras (
-   id INTEGER PRIMARY KEY AUTOINCREMENT,
-   evento_codigo TEXT,
-   nombre TEXT,
-   mostradores INTEGER,
-   botelleros INTEGER,
-   vitrinas INTEGER,
-   enfriadores INTEGER,
-   kits_portatiles INTEGER
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  evento_codigo TEXT,
+  nombre TEXT,
+  mostradores INTEGER,
+  botelleros INTEGER,
+  vitrinas INTEGER,
+  enfriadores INTEGER,
+  kits_portatiles INTEGER
 )
 """)
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS equipos (
-   id INTEGER PRIMARY KEY AUTOINCREMENT,
-   evento_codigo TEXT,
-   barra TEXT,
-   tipo TEXT,
-   serial TEXT UNIQUE,
-   timestamp TEXT
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  evento_codigo TEXT,
+  barra TEXT,
+  tipo TEXT,
+  serial TEXT UNIQUE,
+  timestamp TEXT
 )
 """)
 conn.commit()
@@ -130,9 +130,16 @@ if st.session_state.evento_codigo:
        }
        for tipo, cantidad in equipos_registrables.items():
            st.markdown(f"**🔹 {tipo}s esperados: {cantidad}**")
+           # Recuperar tags ya registrados para esta barra y tipo
+           registros_previos = cursor.execute(
+               "SELECT serial FROM equipos WHERE evento_codigo = ? AND barra = ? AND tipo = ? ORDER BY id ASC",
+               (codigo, barra[2], tipo)
+           ).fetchall()
+           seriales_guardados = [r[0] for r in registros_previos]
            registros = []
            for i in range(cantidad):
-               serial = st.text_input(f"{tipo} #{i+1} - Tag", key=f"{barra[0]}_{tipo}_{i}")
+               valor_inicial = seriales_guardados[i] if i < len(seriales_guardados) else ""
+               serial = st.text_input(f"{tipo} #{i+1} - Tag", value=valor_inicial, key=f"{barra[0]}_{tipo}_{i}")
                if serial.strip():
                    registros.append((codigo, barra[2], tipo, serial.strip(), datetime.datetime.now().isoformat()))
            if st.button(f"Guardar {tipo}s en {barra[2]}", key=f"guardar_{barra[0]}_{tipo}"):
@@ -157,5 +164,5 @@ if st.session_state.evento_codigo:
        return output.getvalue()
    excel_data = to_excel(df_barras, df_equipos)
    st.download_button("📥 Descargar Excel", data=excel_data,
-                      file_name=f"{codigo}_registro_evento.xlsx",
-                      mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                     file_name=f"{codigo}_registro_evento.xlsx",
+                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
